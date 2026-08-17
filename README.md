@@ -293,6 +293,32 @@ AT+QWTTS=1,1,2,"..."
 `+COLP` requires `AT+COLP=1`. `AT+CLIP=1`, `AT+CRC=1`, `AT+CSSN=1,1` give the inbound and
 supplementary-service URCs.
 
+### DTMF detection — the other half of a two-way interface
+
+The module can *hear* keypad presses during a call, so auto-answer + TTS + DTMF is a
+complete IVR that needs no speaker, microphone or codec anywhere in the system.
+
+```
+AT+QTONEDET=1,1            enable DTMF detection
+AT+QVOLTEDTMFDET=1         the VoLTE-path equivalent — enable BOTH, see below
+ATS0=2                     auto-answer
+   (call arrives, module answers, AT+QWTTS speaks a menu)
++QTONEDET: 49              caller pressed '1'
++QTONEDET: 50              '2'
+```
+
+⚠️ **`AT+QTONEDET` is the one that fires — even on a VoLTE call.** `AT+QVOLTEDTMFDET`
+exists, enables cleanly and reports `1`, and never produced a single URC in testing. Arm
+both; matching only the VoLTE-named command looks exactly like "DTMF is unsupported".
+
+⚠️ **The URC carries ASCII codes, not digits**: `49`='1' … `57`='9', `48`='0', `42`='*',
+`35`='#'. Decode with `chr()`.
+
+⚠️ **Keypresses arrive *during* TTS playback.** A press landed 0.4 s before the
+`+QWTTS: 0` completion URC in testing, and an implementation that starts listening only
+after playback finishes will silently drop it. Real callers do not wait for the menu.
+Buffer DTMF during speech, or cancel playback (`AT+QTTS=0`) when a digit arrives.
+
 ### Inbound calls and unattended answering
 
 Inbound is a **separate provisioning question** from outbound and can fail on its own.
@@ -550,7 +576,7 @@ closed and the module correctly reports `+QFTPOPEN: 606,0`.
 | `AT+CNUM` | ✅ | **The SIM's own number** — so you never need it configured |
 | `AT+CRSM` | ✅ | **Raw SIM file access** — read/write elementary files directly |
 | `AT+CPBS=?` | ✅ | Phonebook stores: `SM` SIM · `ME` module · `DC` dialled · `MC` missed · `RC` received · `EN` emergency |
-| `AT+CPBR` / `AT+CPBW` | 📖 | Read / write phonebook entries |
+| `AT+CPBR` / `AT+CPBW` | ✅ | Read / write phonebook entries — a SIM here offered **250 slots**, 40-char numbers, 30-char names |
 | `AT+CLCK` / `AT+CPWD` | 📖 | Facility lock / change password |
 | `AT+QSIMDET` / `AT+QSIMSTAT` | 📖 | SIM hot-plug detection and status |
 
@@ -578,7 +604,7 @@ closed and the module correctly reports `+QFTPOPEN: 606,0`.
 | `AT+CBC` | 📋 | Supply voltage as the module sees it |
 | `AT+CEER` | 📋 | Extended error report for the last failure |
 | `AT+QJDCFG` | ✅ | **Jamming detection** — per-metric thresholds and a URC on detect |
-| `AT+QADC` | ✅ | **Two readable ADC channels** |
+| `AT+QADC` | ✅ | **Two readable ADC channels** — `+QADC: 1,<millivolts>` |
 | `AT+QLINUXCPU` | 📋 | Internal CPU load (the module runs Linux inside) |
 
 ### Packet data
@@ -607,7 +633,7 @@ closed and the module correctly reports `+QFTPOPEN: 606,0`.
 | `AT+CSCA?` | ✅ | Service centre address — must be set or sends fail |
 | `AT+CSCS` | ✅ | TE charset, `GSM` or `UCS2` |
 | `AT+CSMP` | ✅ | First octet / validity / **DCS** |
-| `AT+CMGW` / `AT+CMSS` | 📖 | Write to storage / send from storage |
+| `AT+CMGW` / `AT+CMSS` | ✅ | Write to storage / send from storage — drafts and a queued outbox |
 
 ### The module's own IP stack
 
@@ -678,7 +704,7 @@ Present in silicon on voice-capable variants. Useless without a codec and PCM ro
 | `AT+QTTS` / `AT+QWTTS` / `AT+QTTSETUP` | ✅ | **TTS** — local playback and speaking into a live call |
 | `AT+QDAI` | 📋 | Digital audio interface (PCM format, master/slave) |
 | `AT+QAUDPLAY` `QAUDSTOP` `QAUDRD` | 📋 | Play / stop / record on the module |
-| `AT+QTONEDET` `QDTMFDETSET` | 📋 | **DTMF detection** — decode touch-tones from a call |
+| `AT+QTONEDET` `QDTMFDETSET` `QVOLTEDTMFDET` | ✅ | **DTMF detection** — QTONEDET is the one that fires, even on VoLTE |
 | `AT+QTTS` `AT+QWTTS` `AT+QTTSETUP` | 📋 | **Text-to-speech, in the module** |
 | `AT+QEEC` | 📋 | Echo cancellation tuning |
 | `AT+CLVL` / `AT+CMUT` | 📋 | Volume / mute |
