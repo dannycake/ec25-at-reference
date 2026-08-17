@@ -176,6 +176,105 @@ a bare patch on plastic underperforms its spec.
 
 ---
 
+## Voice, VoLTE and TTS
+
+The module has a **text-to-speech engine**, and it can speak into a live call. Both the
+synthesis and the uplink audio path live inside the module, so **the host needs no audio
+hardware at all** — no codec, no speaker, no microphone. Verified: a 254-character message
+was spoken into a VoLTE call and heard clearly by the recipient.
+
+### ⚠️ On an LTE-only network, `ATD` fails until you force IMS on
+
+Out of the box, dialling returns a bare `ERROR` — instantly, with nothing reaching the
+network:
+
+```
+AT+QCFG="ims"      ->  +QCFG: "ims",0,1     # 0 = follow network  ->  ATD FAILS
+AT+QCFG="ims",1                             # force IMS on
+AT+QCFG="ims"      ->  +QCFG: "ims",1,1     #                     ->  ATD WORKS
+```
+
+The cause is `AT+CEMODE?` reporting **`1`** — "CS/PS mode 1", meaning the module intends to
+place voice calls by **falling back to 2G/3G**. On a carrier that has shut those down there
+is nothing to fall back to, so it refuses before dialling.
+
+⚠️ **`AT+CEMODE=3` (PS mode 1 — voice over IMS) is rejected** with
+`+CME ERROR: operation not supported`, even though `AT+CEMODE=?` advertises `(0-3)`. You
+cannot fix it the obvious way; forcing `QCFG="ims",1` is what works.
+
+Things that were *not* the problem, and are worth ruling out quickly:
+`AT+QCFG="volte/disable"` was already `0` (not disabled), the NV item
+`/nv/item_files/ims/IMS_enable` already read `01`, and `AT+QMBNCFG="list"` showed the
+carrier's VoLTE profile already **selected and activated**.
+
+`AT+CEER` distinguishes the two failure modes: a refusal before dialling versus a call that
+reached the network and later ended — different category values.
+
+### Speaking into a call
+
+```
+AT+QWTTS=<ulmute>,<dlmute>,<mode>[,<text>]
+  <ulmute>  0 = mute uplink, 1 = unmute   <- 1 is what lets the far end hear it
+  <dlmute>  0 = mute downlink, 1 = unmute
+  <mode>    0 = stop · 1 = start, UCS2 · 2 = start, ASCII/GBK direct
+  <text>    max 960 bytes
+Reports  +QWTTS: 0  when finished.
+```
+
+Local playback is the sibling: `AT+QTTS=<mode>,<text>` → `+QTTS: 0`.
+`AT+QTTSETUP=<type>,<param>,<value>` adjusts speed and volume.
+
+### Audio error codes
+
+| `+CME ERROR` | Meaning |
+|---|---|
+| 901 | Audio unknown error |
+| 902 | Audio invalid parameters |
+| 903 | **Audio operation not supported** — `QWTTS` with no active call |
+| 904 | **Audio device busy** — TTS already playing |
+
+### Measured speech rate
+
+| Context | sec/char |
+|---|---|
+| Local `QTTS` playback | **0.064** |
+| **In-call `QWTTS`** | **0.090** |
+
+In-call is ~40 % slower — the network paces the stream at real speech rate. **Budget from
+the in-call figure**: 960 bytes is roughly **85 seconds** of speech, not 60.
+
+### ⚠️ Two traps when detecting call state
+
+**`+CLCC` lists data contexts as calls.** Expect permanent entries like:
+
+```
++CLCC: 1,1,0,1,0,"",128
+             ^ ^
+             | mode=1 = DATA (voice is 0)
+             stat=0 = "active"
+```
+
+These are PDP contexts and they are **always there**. Code that checks only `<stat>` matches
+them and reports a connected call that does not exist. **Require `<mode>==0` first**, then
+read `<stat>` (0=active, 2=dialing, 3=alerting).
+
+**`ATD` blocks until the call connects** — it returned `OK` after 3.6 s, immediately
+followed by `+COLP`. Polling `AT+CLCC` while waiting is both unnecessary and harmful: every
+command between dial and speech is dead air on the uplink. Read the stream and fire on
+`+COLP`:
+
+```
+ATD<number>;                     # ';' makes it a VOICE call, not data
+  ... blocks ...
+OK
++COLP: "<number>",129,,,         # far end connected -> speak now
+AT+QWTTS=1,1,2,"..."
++QWTTS: 0                        # finished
+```
+
+`+COLP` requires `AT+COLP=1`. `AT+CLIP=1`, `AT+CRC=1`, `AT+CSSN=1,1` give the inbound and
+supplementary-service URCs.
+
 ## Command tables
 
 ### Basic / Hayes
