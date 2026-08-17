@@ -402,6 +402,70 @@ the same prompt race applies.
 ⚠️ Needs an active PDP context. The MQTT stack runs over the module's own data session, not
 over your host's network.
 
+## The module as an IP host
+
+It is a complete TCP/IP stack, not a bridge. Verified end to end with **no host data
+session at all** — only the module's own context — so none of it was being carried by the
+machine driving it:
+
+```
+AT+QICSGP=1,1,"<apn>","","",1        configure the module's own context
+AT+QIACT=1                            activate it
+AT+QIDNSGIP=1,"example.com"       ->  +QIURC: "dnsgip"      DNS
+AT+QPING=1,"1.1.1.1",4,4          ->  +QPING: 0,…           ICMP
+AT+QNTP=1,"time.google.com",123   ->  +QNTP: 0              sets the module clock
+AT+QIOPEN=1,0,"TCP","host",80,0,0                           TCP client
+AT+QIOPEN=1,1,"UDP","host",53,0,0                           UDP
+AT+QIOPEN=1,2,"TCP LISTENER","127.0.0.1",0,2020,0           server socket
+AT+QHTTPGET=80                    ->  +QHTTPGET: 0,200      HTTP
+AT+QHTTPREADFILE="ufs:page.html",80                         response straight to flash
+AT+QFLDS="UFS"                    ->  ~16 MB filesystem
+```
+
+⚠️ **The module's stack and the host's `qmi_wwan`/RMNET path are separate.** Bytes sent via
+`QIOPEN` never appear on the host's `wwan` interface and are not counted by its statistics —
+which is also why `AT+QGDCNT` reads near-zero after a host-driven data session.
+
+### ⚠️ HTTPS silently requires SNI
+
+The most expensive finding here. With TLS otherwise correctly configured:
+
+```
+AT+QSSLCFG="sslversion",1,4 · "seclevel",1,0 · "ciphersuite",1,0XFFFF
+AT+QHTTPGET=80   ->  +QHTTPGET: Http unknown error
+
+AT+QSSLCFG="sni",1,1                    <- the fix
+AT+QHTTPGET=80   ->  +QHTTPGET: 0,200
+```
+
+**SNI is off by default**, and essentially every modern host sits behind a CDN or shared IP
+that needs it. The error mentions neither TLS nor SNI. Set it first when debugging HTTPS.
+
+### ⚠️ `AT+QIOPEN`'s access_mode decides how you read
+
+The last parameter, and getting it wrong looks like a broken socket:
+
+| mode | behaviour |
+|---|---|
+| `0` buffer | data is buffered — read with **`AT+QIRD`** |
+| `1` direct push | data is **pushed to the port unsolicited**; `AT+QIRD` returns **`ERROR`** |
+| `2` transparent | the port becomes a raw pipe |
+
+In mode 1 the data arrives perfectly and `QIRD` still errors, because there is nothing
+buffered to read — it already went out the port.
+
+### ⚠️ Two more contracts worth knowing
+
+**`AT+QISEND=<id>,<len>` is exact.** Announce a length, then write precisely that many
+bytes — CRLFs included. Announce the wrong number and the socket waits.
+
+**`AT+QHTTPREAD` consumes the response.** Call it and then `AT+QHTTPREADFILE` and you get
+`Http no get/post request` — there is nothing left. Pick one: out the port, or to a file.
+
+**`TCP LISTENER` opens successfully**, so the module can accept inbound connections — but on
+a carrier that NATs you (most do; we saw `172.56.x` carrier-NAT addressing) it will not be
+reachable from the public internet.
+
 ## Command tables
 
 ### Basic / Hayes
