@@ -539,6 +539,39 @@ on-module storage as usable only via whichever subsystem you have actually teste
 ⚠️ Plain FTP is widely retired, so pick a test target carefully — `ftp.gnu.org` has port 21
 closed and the module correctly reports `+QFTPOPEN: 606,0`.
 
+## The SIM as a contact store
+
+Worth knowing before writing a contacts database: the SIM already is one, it needs no
+persistence code, and it travels with the card.
+
+```
+AT+CPBS="SM"
+AT+CPBW=?   ->  +CPBW: (1-250),40,(128-255),30
+                        │       │   │        └── max name length
+                        │       │   └─────────── <type> range
+                        │       └─────────────── max number length
+                        └─────────────────────── index range
+
+AT+CPBR=1   ->  +CPBR: <index>,"<number>",<type>,"<text>"
+AT+CPBF="Ali"   search by name; +CME ERROR: not found when absent
+```
+
+**Four fields and no more** — index, number, type, name. One card here gave 250 slots,
+40-character numbers and 30-character names. Over-length is rejected explicitly
+(`dial string too long` / `text string too long`) rather than truncated. `<type>` 145
+preserves a leading `+`; 129 is the national form.
+
+⚠️ **Non-ASCII names need `AT+CSCS="UCS2"` on BOTH write and read.** Written as UCS2 and read
+back under `GSM`, an accented character came back as a **space** — silently lossy.
+
+⚠️ **The number field is NOT UCS2-encoded, unlike `AT+CMGS`.** Hex-encoding the number under
+UCS2 stores the literal hex string. Encode the *name*, leave the *number* plain ASCII —
+the opposite of the SMS rule, and easy to get backwards if one helper serves both.
+
+⚠️ Cards vary. Check for a **USIM phonebook** (EF_PBR, file `0x4F30`) if you need email,
+a second number or groups — `AT+CRSM=192,20272,0,0,15` returns `memory failure` on a card
+that only has the basic EF_ADN store.
+
 ## Command tables
 
 ### Basic / Hayes
@@ -576,7 +609,7 @@ closed and the module correctly reports `+QFTPOPEN: 606,0`.
 | `AT+CNUM` | ✅ | **The SIM's own number** — so you never need it configured |
 | `AT+CRSM` | ✅ | **Raw SIM file access** — read/write elementary files directly |
 | `AT+CPBS=?` | ✅ | Phonebook stores: `SM` SIM · `ME` module · `DC` dialled · `MC` missed · `RC` received · `EN` emergency |
-| `AT+CPBR` / `AT+CPBW` | ✅ | Read / write phonebook entries — a SIM here offered **250 slots**, 40-char numbers, 30-char names |
+| `AT+CPBR` / `AT+CPBW` / `AT+CPBF` | ✅ | Read / write / **search** phonebook entries — see the structure note below |
 | `AT+CLCK` / `AT+CPWD` | 📖 | Facility lock / change password |
 | `AT+QSIMDET` / `AT+QSIMSTAT` | 📖 | SIM hot-plug detection and status |
 
