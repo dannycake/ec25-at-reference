@@ -394,6 +394,55 @@ modem into its own store. Pick one owner.
 
 ---
 
+## Sources
+
+**The primary source for this document is the hardware.** Everything marked ✅ was run
+against a real EC25-AFX on a live carrier network, and the notes exist precisely where
+observed behaviour diverged from the written specs. Where a figure came from a document
+rather than a measurement, it is cited below.
+
+### Quectel documentation
+
+- [EC25 Series LTE Standard Specification, V2.7](https://quectel.com/content/uploads/2024/03/Quectel_EC25_Series_LTE_Standard_Specification_V2.7-1.pdf)
+  — the per-variant feature table: supported bands, VoLTE/SMS/QMI availability, carrier
+  certifications, and which variants are data-only. Worth reading before buying a variant;
+  the naming does not make the differences obvious.
+- [EC25 & EC21 GNSS AT Commands Manual, V1.1](https://sixfab.com/wp-content/uploads/2018/09/Quectel_EC25EC21_GNSS_AT_Commands_Manual_V1.1.pdf)
+  — the `AT+QGPS*` family, NMEA output configuration, and gpsOneXTRA.
+- [EC25 Mini PCIe Hardware Design, V1.1](https://www.dragino.com/downloads/downloads/datasheet/other_vendors/EC25/Quectel_EC25_Mini_PCIe_Hardware_Design_V1.1.pdf)
+  — the three antenna connectors, the **2.85 V GNSS bias** figure, active vs passive antenna
+  requirements, and the B13/B14 harmonic recommendation that the GNSS section above works
+  through.
+- [LTE EC25 series](https://www.quectel.com/product/lte-ec25-series/) ·
+  [LTE EC25 Mini PCIe series](https://www.quectel.com/product/lte-ec25-mini-pcie-series/)
+  — product pages; GNSS accuracy (<2.5 m CEP-50, Qualcomm IZat Gen8C Lite) and TTFF figures.
+
+### Protocol specifications
+
+The MMS section is an implementation of these; neither is Quectel's and neither is
+discoverable from the AT command set.
+
+- **OMA Multimedia Messaging Service Encapsulation Protocol** (OMA-TS-MMS_ENC) — the
+  M-Send.req / M-Send.conf / M-Notification.ind / M-Retrieve.conf PDU structures, header
+  field codes, and response status values such as `0xE2`.
+- **WAP-230-WSP**, WAP Forum Wireless Session Protocol — the binary encoding primitives:
+  uintvar, text-string, **quoted-string**, value-length, short-integer, the well-known
+  content-type and header-field assignments, and the multipart body layout. The
+  quoted-string requirement for `Content-ID` comes from here.
+- **3GPP TS 27.007** (AT commands for UE) and **TS 27.005** (SMS AT commands) — the
+  standard `+C*` commands. Where this document says a standard command behaves
+  non-standardly, that is the baseline it is measured against.
+
+### Notes on provenance
+
+- `AT+CLAC` was captured from firmware `EC25AFXGAR07A04M1G`. Command availability and the
+  `$QC*` set **vary by variant and firmware**; treat the 📋 entries as "present on that
+  build" rather than universal.
+- Behaviour attributed to carriers (APN auto-provisioning, MMSC on carrier-private DNS,
+  MVNOs not answering USSD, ICMP blocked to the MMSC) was observed on **one MVNO on one US
+  network**. The mechanisms generalise; the specifics may not.
+- No claim here rests on a vendor marketing page.
+
 ## License
 
 CC0 / public domain. Corrections welcome.
