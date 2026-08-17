@@ -19,7 +19,7 @@ omitted.
 
 ---
 
-## Start here: five things that will cost you an afternoon
+## Start here: six things that will cost you an afternoon
 
 ### 1. `AT+CLAC` is not exhaustive
 
@@ -65,6 +65,42 @@ UTF-16 surrogate pairs — 🦨 (U+1F9A8) goes out as `D83EDDA8`.
 
 Inbound, when `CSCS` is `GSM`, UCS2 messages come back as raw hex. That's correct
 behaviour, not corruption — decode it as UTF-16BE.
+
+### 6. ⚠️ `AT+QCFG="band"` truncates a `0x`-prefixed mask and returns `OK` anyway
+
+This one destroys configuration rather than merely wasting time, so treat it as the most
+dangerous entry on the list.
+
+The LTE band mask is a bitfield with bit = (band − 1). On a North-American EC25 that means
+**B66 is bit 65 and B71 is bit 70** — the mask needs 71 bits, **18 hex digits**, and the
+command's own test form advertises a narrower range (`(0-7FFFFFFFFFFFFFFFF)`, 17 digits),
+which makes the truncation look like a hard ceiling. It isn't. It's a parser difference
+between two spellings of the same number:
+
+```
+AT+QCFG="band",0,0x42000000000000381A,0,1     OK  ->  0x381A                  everything past bit 63 dropped
+AT+QCFG="band",0,42000000000000381A,0,1       OK  ->  0x42000000000000381A    correct
+```
+
+**The read-back prints the `0x` form.** So the natural move — query the mask, save it,
+write it back — is precisely the one that silently discards the high bands. Both spellings
+return `OK`; only one stores what you asked for.
+
+Consequences worth knowing before you touch this command:
+
+- **Always read the mask back and compare** after any write. An `OK` from a `QCFG` write
+  means the command parsed, not that the value survived.
+- **A band lock that fails is invisible.** Locking to one band at a time and checking
+  registration produces plausible-looking results even when no lock took effect — the tell
+  is that *every* band under test reports the same serving band.
+- **Setting the LTE mask to `0` costs all LTE service** while the module keeps answering AT
+  normally: `AT+QNWINFO` says `No Service`, and `AT+CGATT?` unhelpfully still reports `1`.
+- Recovery is just the bare-hex write, and it persists across `AT+CFUN=1,1`. Things that do
+  **not** help, so you can skip them: the decimal form (`ERROR`), an all-ones mask,
+  `AT+CFUN=0` first, re-selecting an MBN profile, `AT&F` + `AT&W`, `AT+QCFG="freezeband"`,
+  or putting the high bits in the third field (that field rejects writes and stays `0`).
+
+⚠️ Record the factory mask **and prove you can write it back** before changing anything.
 
 ---
 
@@ -622,7 +658,7 @@ that only has the basic EF_ADN store.
 | `AT+CREG?` `AT+CGREG?` `AT+CEREG?` | ✅ | CS / GPRS / **EPS** registration. On LTE-only, `CEREG` is the one |
 | `AT+CFUN` | ✅ | `0` minimum (radio off, SIM alive) · `1` full · `4` airplane |
 | `AT+QNWINFO` | ✅ | Tech / operator / band / channel in one line |
-| `AT+QCFG="band"` | ✅ | Read/set band mask — lock a band for range testing |
+| `AT+QCFG="band"` | ✅ | Read/set band mask — lock a band for range testing. ⚠️ Write as **bare hex, no `0x`**; see trap 6 |
 | `AT+QCFG="nwscanmode"` / `"nwscanseq"` | 📖 | Restrict RAT / set search order |
 | `AT+QENG="servingcell"` | ✅ | **Full serving-cell dump** — MCC, MNC, Cell ID, PCI, EARFCN, band, bandwidth, TAC, RSRP, RSRQ, RSSI, SINR |
 | `AT+QENG="neighbourcell"` | 📖 | Neighbour cells |
