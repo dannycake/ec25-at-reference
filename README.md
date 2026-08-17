@@ -185,8 +185,53 @@ AT+QGPSCFG="outport" where NMEA goes — "usbnmea" streams it on a separate ttyU
 Accuracy is **<2.5 m CEP-50** (Qualcomm IZat Gen8C Lite; GPS/GLONASS/BDS/Galileo/QZSS).
 TTFF cold 26–28 s; with gpsOneXTRA, warm 2.2–3.8 s, hot 1.5–3.4 s, cold reduced by 18–30 s.
 
-⚠️ **`AT+QGPSXTRA?` defaults to `0`.** Assisted GPS is off out of the box; enabling it needs
-a data session but turns a half-minute cold start into a couple of seconds.
+⚠️ **`AT+QGPSXTRA?` defaults to `0`.** Assisted GPS is off out of the box; enabling it turns
+a half-minute cold start into a couple of seconds.
+
+### ⚠️ Side-loading gpsOneXTRA — it wants XTRA**2**, and XTRA3 fails silently
+
+Assistance data does **not** require a data session on the module. Download it on the host,
+push it with `AT+QFUPL`, and inject. But only one format is accepted, and the other one
+looks like it worked:
+
+```
+AT+QGPSXTRADATA="xtra3grc.bin"    OK  ->  +QGPSXTRADATA: 0,"1980/01/05,19:00:00"   nothing loaded
+AT+QGPSXTRADATA="xtra2.bin"       OK  ->  +QGPSXTRADATA: 10080,"..."               7 days valid
+AT+QGPSXTRADATA="RAM:xtra2.bin"   +CME ERROR: XTRA file open failed
+```
+
+**The validity field is the only evidence.** A `0` there means no assistance was loaded no
+matter what the command returned. Note that a bad *path* does error properly — which makes
+the silence on the wrong *format* more misleading, since one failure mode is loud.
+
+Working sequence, file from `http://xtrapath2.izatcloud.net/xtra2.bin`:
+
+```
+AT+QGPSXTRA=1
+AT+QGPSXTRATIME=0,"<UTC YYYY/MM/DD,hh:mm:ss>",1,1,5
+AT+QGPSXTRADATA="xtra2.bin"
+AT+QGPSXTRADATA?                  <- must be non-zero
+```
+
+### ⚠️ `gnssconfig` reads like "GPS only" and is not
+
+`AT+QGPSCFG="gnssconfig",1` means GLONASS **on** / BeiDou **on** / Galileo **on** — GPS is
+always enabled and is not part of the mask. `0` is the one that disables the others. If you
+see only `$GPGSV` sentences, that is a signal problem, not a configuration problem; don't go
+changing this looking for more constellations.
+
+### Position without GNSS
+
+The serving cell alone gives a usable estimate in about a second, indoors, with no antenna:
+`AT+QENG="servingcell"` yields MCC/MNC/ECI/TAC, which any MLS-compatible geolocation API
+resolves to a tower position. Useful ordering for real products — answer from the cell
+immediately, refine with GNSS when a fix arrives, because **GNSS returns nothing at all
+until it has four satellites**.
+
+⚠️ In that response, **cellID and TAC are unprefixed HEX while every other field is
+decimal.** Parsing them as decimal returns a valid-looking wrong tower rather than an error.
+⚠️ And the accuracy such an API reports is its confidence in the *tower's* location, not the
+device's.
 
 **Diagnosing no fix, from the NMEA alone:**
 
