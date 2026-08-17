@@ -7,7 +7,15 @@ Most of this is in Quectel's manuals somewhere. What is here that isn't there: w
 commands actually behave differently from the documentation, and the specific failures that
 cost time. Every ✅ below was run on real hardware.
 
-Legend — ✅ verified on hardware · 📋 listed by `AT+CLAC` on this firmware · 📖 documented but not exercised here
+Legend — ✅ verified on hardware · ⚠️ works with a caveat · ✗ tried and refused ·
+📋 listed by `AT+CLAC` on this firmware · 📖 documented but not exercised here
+
+**What "verified" covers here:** SMS (send/receive, UCS2), MMS (send *and* retrieve, full
+PDU encode/decode), LTE data, GNSS, outbound **and** inbound VoLTE with in-module TTS,
+auto-answer, PSM/eDRX negotiation, MQTT, and the module's whole IP stack — DNS, ping, NTP,
+TCP, UDP, TCP listener, HTTP, HTTPS, raw TLS, FTP and on-module file storage. Where
+something was tried and *failed*, the failure and its cause are written down rather than
+omitted.
 
 ---
 
@@ -606,10 +614,10 @@ closed and the module correctly reports `+QFTPOPEN: 606,0`.
 | Command | | Purpose |
 |---|---|---|
 | `AT+QIOPEN` | ✅ | Open a socket — 12 available: `TCP`, `UDP`, **`TCP LISTENER`**, `UDP SERVICE` |
-| `AT+QISEND` / `AT+QIRD` / `AT+QICLOSE` | 📖 | Send / read / close |
+| `AT+QISEND` / `AT+QIRD` / `AT+QICLOSE` | ✅ | Send / read / close |
 | `AT+QPING` | ✅ | ICMP ping from the module |
 | `AT+QNTP` | ✅ | NTP client |
-| `AT+QIDNSCFG` / `AT+QIDNSGIP` | 📖 | Configure DNS / resolve a name |
+| `AT+QIDNSCFG` / `AT+QIDNSGIP` | ✅ | Configure DNS / resolve a name |
 
 **`TCP LISTENER` means the module can be a server** — whether that's reachable depends on
 whether your carrier NATs you (most do).
@@ -619,10 +627,12 @@ whether your carrier NATs you (most do).
 | Command | | Purpose |
 |---|---|---|
 | `AT+QHTTPCFG` | ✅ | HTTP(S) client — TLS context, headers, content type, basic auth, custom headers |
-| `AT+QHTTPURL` `QHTTPGET` `QHTTPPOST` `QHTTPREAD` | 📖 | Set URL, GET, POST, read response |
+| `AT+QHTTPURL` `QHTTPGET` `QHTTPREAD` `QHTTPREADFILE` | ✅ | Set URL, GET, POST, read response |
 | `AT+QMTCFG` | ✅ | MQTT client — v3.1/3.1.1, TLS, keepalive, clean session, **will messages** |
-| `AT+QMTOPEN` `QMTCONN` `QMTSUB` `QMTPUB` | 📖 | Open, connect, subscribe, publish |
+| `AT+QMTOPEN` `QMTCONN` `QMTSUB` `QMTPUB` `QMTDISC` | ✅ | Open, connect, subscribe, publish |
 | `AT+QFTPCFG` | ✅ | FTP(S) — account, binary/ASCII, active/passive, TLS, resume |
+| `AT+QFTPOPEN` `QFTPPWD` `QFTPGET` `QFTPCLOSE` | ✅ | Connect, navigate, download, close |
+| `AT+QSSLOPEN` `QSSLSEND` `QSSLRECV` `QSSLCLOSE` | ✅ | **Raw TLS sockets**, independent of the HTTP stack |
 | `AT+QSSLCFG` | ✅ | **Full TLS stack** — version, 28 cipher suites by ID, CA cert, client cert+key, PSK, SNI, ALPN, session cache, DTLS |
 
 ⚠️ `QSSLCFG` also exposes a family of `ignore*` verification overrides. Those are how
@@ -632,7 +642,7 @@ devices ship without validating certificates. Leave them alone.
 
 | Command | | Purpose |
 |---|---|---|
-| `AT+QFLST` | ✅ | List files stored on the module |
+| `AT+QFLST` | ⚠️ | Meant to list files — returned **no listing** for every pattern tried here |
 | `AT+QFLDS` | ✅ | Free/total space on a volume |
 | `AT+QFUPL` / `AT+QFDWL` | 📖 | Upload / download over the AT port |
 | `AT+QFOPEN` `QFREAD` `QFWRITE` `QFCLOSE` `QFDEL` | 📖 | Handle operations |
@@ -642,8 +652,8 @@ devices ship without validating certificates. Leave them alone.
 | Command | | Purpose |
 |---|---|---|
 | `AT+CFUN=0/1/4` | ✅ | The cheap way to park the radio |
-| `AT+CPSMS` | ✅ | **PSM** — negotiate deep sleep with the network (TAU + active timers) |
-| `AT+CEDRXS` | ✅ | **eDRX** — longer paging cycles, sleep between them |
+| `AT+CPSMS` | ✅ | **PSM** — granted on a live carrier; read the *granted* timers, not your request |
+| `AT+CEDRXS` | ⚠️ | **eDRX** — returns `OK` but may be **silently refused**; check `AT+CEDRXRDP`. `AT+CEDRXS?` errors on this firmware |
 | `AT+QSCLK` | 📋 | Slow clock / sleep when the host is idle |
 | `AT+QPOWD` | ✅ | Controlled power-down — `0` immediate, `1` graceful network detach |
 
@@ -665,20 +675,21 @@ Present in silicon on voice-capable variants. Useless without a codec and PCM ro
 | Command | | Purpose |
 |---|---|---|
 | `AT+QAUDMOD` | ✅ | Audio mode 0–5 |
+| `AT+QTTS` / `AT+QWTTS` / `AT+QTTSETUP` | ✅ | **TTS** — local playback and speaking into a live call |
 | `AT+QDAI` | 📋 | Digital audio interface (PCM format, master/slave) |
 | `AT+QAUDPLAY` `QAUDSTOP` `QAUDRD` | 📋 | Play / stop / record on the module |
 | `AT+QTONEDET` `QDTMFDETSET` | 📋 | **DTMF detection** — decode touch-tones from a call |
 | `AT+QTTS` `AT+QWTTS` `AT+QTTSETUP` | 📋 | **Text-to-speech, in the module** |
 | `AT+QEEC` | 📋 | Echo cancellation tuning |
 | `AT+CLVL` / `AT+CMUT` | 📋 | Volume / mute |
-| `AT+CLCC` | 📋 | List current calls |
+| `AT+CLCC` | ✅ | List current calls — ⚠️ **includes data contexts**, filter on `<mode>==0` |
 
 ### Miscellaneous
 
 | Command | | Purpose |
 |---|---|---|
-| `AT+CUSD` | ✅ | **USSD** — `*123#`-style codes. Note many MVNOs acknowledge and never answer |
-| `AT+CMUX` | 📋 | **Multiplex one serial port into several channels** — how you get concurrent AT and data without extra ports |
+| `AT+CUSD` | ✅ | **USSD** — codes are accepted; note many MVNOs acknowledge with "a message will be sent" and never send one |
+| `AT+CMUX` | ✗ | Multiplexing — **refused on the USB AT port** (`operation not allowed`), and Linux needs `CONFIG_N_GSM` |
 | `AT+QFLOWCOUNT` / `AT+QGDCNT` | ✅ | Data counters. ⚠️ These track the **module's own** PDP contexts, not traffic over `qmi_wwan`/RMNET — don't use them as a usage meter for a host-driven session |
 | `AT+QIPPTCFG` | 📋 | IP passthrough — bridge the cellular IP straight to the host |
 | `AT+QFILTER` | 📋 | Packet filtering |
