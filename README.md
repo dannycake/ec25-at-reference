@@ -256,7 +256,17 @@ the in-call figure**: 960 bytes is roughly **85 seconds** of speech, not 60.
 
 These are PDP contexts and they are **always there**. Code that checks only `<stat>` matches
 them and reports a connected call that does not exist. **Require `<mode>==0` first**, then
-read `<stat>` (0=active, 2=dialing, 3=alerting).
+read `<stat>` (0=active, 2=dialing, 3=alerting, 4=incoming).
+
+During a real inbound call the list looked like this — note the genuine call is **not
+first**:
+
+```
++CLCC: 1,1,0,1,0,"",128                <- data context
++CLCC: 2,1,0,1,0,"",128                <- data context
++CLCC: 4,1,0,0,0,"<number>",145        <- the actual voice call
++CLCC: 3,1,0,1,0,"",128                <- data context
+```
 
 **`ATD` blocks until the call connects** — it returned `OK` after 3.6 s, immediately
 followed by `+COLP`. Polling `AT+CLCC` while waiting is both unnecessary and harmful: every
@@ -274,6 +284,123 @@ AT+QWTTS=1,1,2,"..."
 
 `+COLP` requires `AT+COLP=1`. `AT+CLIP=1`, `AT+CRC=1`, `AT+CSSN=1,1` give the inbound and
 supplementary-service URCs.
+
+### Inbound calls and unattended answering
+
+Inbound is a **separate provisioning question** from outbound and can fail on its own.
+
+```
++CRING: VOICE                     with AT+CRC=1 (plain "RING" otherwise)
++CLIP: "<number>",145,"",0,,0     caller ID, needs AT+CLIP=1
+ATA                               answer -> OK
+AT+CPAS                        ->  +CPAS: 4     (3 = ringing, 4 = in call, 0 = idle)
+AT+QWTTS=1,1,2,"..."           ->  +QWTTS: 0
+ATH
+```
+
+`ATS0=<n>` auto-answers after n rings, so the module can pick up and speak with no host
+interaction at all. ⚠️ **Restore `ATS0=0`** — left armed it silently answers every call.
+
+⚠️ **A call diverting to voicemail may mean the module simply has no service**, not that
+inbound is unprovisioned. Confirm `AT+QNWINFO` shows a real cell before concluding anything
+about call handling — a network with an unreachable subscriber forwards immediately.
+
+## Multiplexing (CMUX) — likely a dead end over USB
+
+`AT+CMUX` would let several logical channels share one AT port, so a daemon could hold the
+URC stream while other code issues commands. Two things block it:
+
+**The module refuses on the USB AT port:**
+
+```
+AT+CMUX=?          +CMUX: (0),(0-2),(1-8),(1-32768),(1-255),(0-100),(2-255),(1-255),(1-7)
+AT+CMUX=0,0,5,127  +CME ERROR: operation not allowed
+```
+
+⚠️ A **refusal, not a syntax error** — the test form advertises full parameter ranges and
+then declines the write. Plausible reason: CMUX exists to multiplex a single physical UART,
+and over USB the module already exposes four independent ttyUSB ports. Unverified, since a
+USB adapter exposes no UART pins to test against.
+
+**And Linux needs a mux driver you may not have.** Terminating GSM 07.10 requires the
+`n_gsm` line discipline (`CONFIG_N_GSM`), which produces `/dev/gsmtty*`. Check before
+planning around it:
+
+```sh
+zgrep N_GSM /proc/config.gz     # or grep your /boot/config-*
+cat /proc/tty/ldiscs            # n_gsm appears here when available
+```
+
+Two mainstream kernels checked for this document had `# CONFIG_N_GSM is not set`.
+
+⚠️ **Have a recovery route staged before experimenting.** If the module *does* enter mux
+mode, the port stops answering plain AT — including the command to undo it. On a
+4-port composite there is usually a **second AT port** to issue `AT+CFUN=1,1` from;
+otherwise a USB deauthorize/reauthorize via
+`/sys/bus/usb/devices/<dev>/authorized` resets it.
+
+## Power saving — PSM and eDRX
+
+```
+AT+CEREG=4                                enable extended registration reporting
+AT+CPSMS=1,,,"<TAU bits>","<active bits>" request
+AT+CFUN=0 / AT+CFUN=1                     re-attach so it rides the ATTACH
+AT+CPSMS?  /  AT+CEREG?                   read back what was GRANTED
+```
+
+Timer octets are 3GPP TS 24.008: 3 bits of unit, 5 bits of value.
+
+| T3412 ext (TAU) | | T3324 (Active Time) | |
+|---|---|---|---|
+| `000` | 10 min | `000` | 2 sec |
+| `001` | 1 hour | `001` | 1 min |
+| `010` | 10 hours | `010` | 6 min |
+| `011` | 2 sec | `111` | deactivated |
+| `100` | 30 sec | | |
+| `101` | 1 min | | |
+| `110` | 320 hours | | |
+| `111` | deactivated | | |
+
+✳️ **Read the granted values, not your request.** One network here granted a requested
+1-hour TAU but **re-expressed it** — asked as `1 × 1 hour` (`00100001`), granted as
+`6 × 10 min` (`00000110`). Same duration, different encoding. The granted timers appear in
+extended `+CEREG` (the last two fields) as well as `+CPSMS?`.
+
+⚠️ **eDRX may be silently refused.** `AT+CEDRXS=1,4,"0101"` returns `OK` while
+`AT+CEDRXRDP` continues to report `0` — requested, not granted. Note also that
+`AT+CEDRXS?` returns `ERROR` on some firmware while `AT+CEDRXRDP` works; read state with
+the latter.
+
+⚠️ **PSM can cost you network service, silently.** After a PSM test the module reported
+`+CGATT: 1` (claiming attached) while `AT+QNWINFO` said `No Service` and `AT+CEREG?` timed
+out. **`AT+CGATT` is not a reachability check.** An `AT+CFUN=0/1` cycle restores it.
+
+## MQTT in the module
+
+The module is a real MQTT endpoint — it holds the connection itself, so it keeps working
+while the host that drives it is busy or asleep.
+
+```
+AT+QMTCFG="version",0,4                    MQTT 3.1.1
+AT+QMTCFG="keepalive",0,60
+AT+QMTOPEN=0,"broker.example.com",1883  ->  +QMTOPEN: 0,0
+AT+QMTCONN=0,"<client-id>"              ->  +QMTCONN: 0,0,0
+AT+QMTSUB=0,1,"some/topic",0            ->  +QMTSUB: 0,1,0,0
+
+incoming arrives unsolicited:
++QMTRECV: 0,0,"some/topic","payload"
+
+AT+QMTPUB=0,0,0,0,"some/topic"          then body + Ctrl-Z (0x1A)
+                                        ->  +QMTPUB: 0,0,0
+AT+QMTCONN?                             ->  +QMTCONN: 0,3     (3 = connected)
+AT+QMTDISC=0
+```
+
+⚠️ `AT+QMTPUB` takes its payload the same way `AT+CMGS` does — write, then **Ctrl-Z** — so
+the same prompt race applies.
+
+⚠️ Needs an active PDP context. The MQTT stack runs over the module's own data session, not
+over your host's network.
 
 ## Command tables
 
