@@ -466,6 +466,45 @@ bytes — CRLFs included. Announce the wrong number and the socket waits.
 a carrier that NATs you (most do; we saw `172.56.x` carrier-NAT addressing) it will not be
 reachable from the public internet.
 
+### Raw TLS sockets, separate from HTTPS
+
+`AT+QSSLOPEN` gives a TLS client independent of the HTTP stack:
+
+```
+AT+QSSLCFG="sslversion",2,4 · "seclevel",2,0 · "ciphersuite",2,0XFFFF · "sni",2,1
+AT+QSSLOPEN=1,2,0,"example.com",443,0  ->  +QSSLOPEN: 0,0
+AT+QSSLSEND=0,<len>   + exactly <len> bytes  ->  SEND OK
+AT+QSSLRECV=0,400                      ->  +QSSLRECV: 400  HTTP/1.1 200 OK …
+```
+
+⚠️ Needs the same **SNI** setting as HTTPS.
+
+### FTP — and a local-path error that impersonates a network failure
+
+Control channel and file download both work:
+
+```
+AT+QFTPCFG="contextid",1 · "account","<user>","<pass>" · "filetype",1 · "transmode",1
+AT+QFTPOPEN="<host>",21        ->  +QFTPOPEN: 0,0
+AT+QFTPPWD                     ->  +QFTPPWD: 0,/
+AT+QFTPGET="readme.txt","COM:" ->  +QFTPGET: 0,379      379 bytes over the data channel
+```
+
+⚠️ **Error `613` is a LOCAL FILE PATH problem, not a network one.** Downloading to a
+`ufs:` path fails with `613`, which looks exactly like passive FTP failing through carrier
+NAT — a plausible and completely wrong diagnosis. The identical download to **`"COM:"`**
+(stream out the serial port) returns `0,<bytes>`, proving the data connection is fine.
+**Target `COM:` first to separate local-path failures from network failures.**
+
+⚠️ **The on-module filesystem path convention is inconsistent between subsystems.**
+`AT+QHTTPREADFILE="ufs:page.html"` succeeds while `AT+QFTPGET=…,"ufs:…"` returns `613`,
+`AT+QFDEL="ufs:page.html"` gives `Invalid input value`, and `AT+QFLST` produced no listing
+for any pattern tried — even though `AT+QFLDS="UFS"` reports the volume correctly. Treat
+on-module storage as usable only via whichever subsystem you have actually tested.
+
+⚠️ Plain FTP is widely retired, so pick a test target carefully — `ftp.gnu.org` has port 21
+closed and the module correctly reports `+QFTPOPEN: 606,0`.
+
 ## Command tables
 
 ### Basic / Hayes
